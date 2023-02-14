@@ -1,0 +1,3 @@
+question:websocket just accept one send,and dont repsonse after first send,and cant unregister last connection
+case:
+solve:

@@ -1,0 +1,100 @@
+<html>
+    <head>
+        <title>Chat Room</title>
+        <style>
+            .headers{
+                height: fit-content;
+                padding: 20px 10px;
+                text-align: center;
+            }
+            .mainbody{
+                max-width: 1000px;
+                width: 90%;
+                margin: auto;
+            }
+            .mainbody textarea{
+                width: 95%;
+                margin: auto;
+                outline: none;
+                border: 5px solid black;
+                display: block;
+                padding: 8px 10px;
+                font-size: large;
+            }
+            .messbox{
+                width: 95%;
+                margin: auto;
+                border: 5px solid black;
+                outline: none;
+                border-radius: 1rem;
+                /* height: 40vh; */
+                overflow: scroll;
+            }
+            .messbox::-webkit-scrollbar{
+                display: none;
+            }
+            #messboxone{
+                height: 40vh;
+                padding: 10px 8px;
+            }
+            #sendmess{
+                height: 20vh;
+            }
+            .speicalhr{
+                outline: none;
+                border: none;
+                height: 20px;
+            }
+            .mess{
+                outline: none;
+                border: 3px solid black;
+                padding: 5px 3px;
+                font-size: large;
+                width: fit-content;
+                margin-top: 5px;
+                margin-bottom: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="headers"><h3>Chat Room</h3></div>
+        <div class="mainbody">
+            <div class="messbox" id="messboxone">
+                <div class="mess">this is test message</div>
+            </div>
+            <hr class="speicalhr">
+            <textarea id="sendmess" onkeydown="sek(event.keyCode)"></textarea>
+        </div>
+        <script>
+            function sek(ie){
+                if (ie==13){
+                    sendmess()
+                }
+            }
+            function sendmess(){
+                var mess=document.getElementById("sendmess")
+                var senddata={"roomid":"9878","usrid":"6666","content":mess.value,"sign":"from safari"}
+                wschat.send(JSON.stringify(senddata))
+                document.getElementById("sendmess").value=""
+                console.log("send data")
+            }
+            var wschat=new WebSocket("ws://localhost:8001/chat?roomid=9878&usrid=6666")
+            wschat.onclose=function(event){
+                window.alert("connection closed")
+            }
+            wschat.onmessage=function (event){
+                var data=event.data
+                console.log(data)
+                var jdata=JSON.parse(data)
+                console.log(jdata)
+                var content=jdata["content"]
+                var usrid=jdata["usrid"]
+                var contaier=document.getElementById("messboxone")
+                contaier.innerHTML+=`<div class="mess">${content}</div>`
+            }
+            setInterval(() => {
+                wschat.send("pong")
+            }, 100*100);
+        </script>
+    </body>
+</html>
