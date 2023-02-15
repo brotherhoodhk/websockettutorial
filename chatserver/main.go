@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net/http"
 	"newstart/server"
+	"os"
 	"strconv"
 	"time"
 
@@ -56,9 +57,22 @@ func (s *Hub) Run() {
 				delete(conpool, c)
 			}
 		case c := <-ordhub.SendToChef:
+			//生成唯一的订单id，并将订单id与菜品讯息绑定
+			rand.Seed(time.Now().UnixNano())
+			orderid := rand.Intn(89999) + 10000
+			newmsg := &singledishplus{Dishinfo: c, Orderid: orderid}
+			dishlink[orderid] = c
 			for con, _ := range chefpool {
-				err := con.con.WriteJSON(c)
-				errorlog.Println(err)
+				err := con.con.WriteJSON(newmsg)
+				if err != nil {
+					errorlog.Println(err)
+				}
+			}
+		case c := <-ordhub.DishDone:
+			if dish, ok := dishlink[c.Orderid]; ok {
+				dishespool[dish] = true     //菜品状态为完成
+				delete(dishlink, c.Orderid) //删除菜品联系
+				processlog.Println(dish.Name, " is done")
 			}
 		//chef zone end
 		case m := <-s.Broadcast:
@@ -78,6 +92,7 @@ func ServerStart() {
 	http.HandleFunc("/chat", ChatRoom)
 	http.HandleFunc("/orderdish", OrderSomething)
 	http.HandleFunc("/chef", ChefPlatform)
+	http.HandleFunc("/checkout", CheckOut)
 	http.ListenAndServe(":8001", nil)
 }
 func ChatRoom(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +131,7 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 		recmsg.Sign = "from server"
 		for _, wscon := range conlist {
 			err = wscon.con.WriteJSON(&recmsg)
-			fmt.Println(recmsg)
+			// fmt.Println(recmsg)
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -132,7 +147,29 @@ func OrderSomething(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errorlog.Println(err)
 	}
+	//绑定桌位id
+	heads := r.URL.Query()
+	if _, ok := heads["desk"]; !ok {
+		errorlog.Println("not desk args")
+		return
+	}
+	deskid, err := strconv.Atoi(heads["desk"][0])
+	if err != nil {
+		errorlog.Println("desk id is invaild")
+		return
+	}
 	con := &Connection{con: ws, send: make(chan []byte, 256)}
+	if info, ok := deskinfo[deskid]; !ok || info.Status {
+		//若此桌未使用或上一次客人已结账
+		id := rand.Intn(89999) + 10000
+		orderid := rand.Intn(899999) + 100000
+		customerpool[con] = &userinfo{Id: id, OrderId: orderid, Sum: 0, Action: "", Status: false}
+		deskinfo[deskid] = customerpool[con]
+		processlog.Println("desk ", deskid, " register")
+	} else if ok && !info.Status {
+		customerpool[con] = deskinfo[deskid]
+	}
+	processlog.Println("the desk ", deskid, " info ", deskinfo[deskid])
 	hub.register <- con
 	defer func() {
 		hub.unregister <- con
@@ -152,20 +189,22 @@ func Waiter(con *Connection) {
 				fmt.Println("connection dont exsit")
 				id := rand.Intn(89999) + 10000
 				orderid := rand.Intn(899999) + 100000
-				customerpool[con] = &userinfo{Id: id, OrderId: orderid, Sum: 0, Action: ""}
+				customerpool[con] = &userinfo{Id: id, OrderId: orderid, Sum: 0, Action: "", Status: false}
 			}
 			//end
 			userorderinfo := customerpool[con]
-			fmt.Println(userorderinfo) //debug line
-			price, actionid := getdishinfo(orderinfo.Dish)
-			fmt.Println(price) //debug line
-			userorderinfo.Sum += price
-			userorderinfo.Action += actionid + "\n"
-			//这里还应有一个推送功能，用于将新点菜品发送给后厨端
-			dish := new(singledish)
-			dish.ScanAction(actionid)
-			dish.PushToPool()
-			ordhub.SendToChef <- dish
+			// fmt.Println(userorderinfo) //debug line
+			for _, v := range orderinfo.Dish {
+				price, actionid := getdishinfo(v)
+				// fmt.Println(price) //debug line
+				userorderinfo.Sum += price
+				userorderinfo.Action += actionid + "\n"
+				//这里还应有一个推送功能，用于将新点菜品发送给后厨端
+				dish := new(singledish)
+				dish.ScanAction(actionid)
+				dish.PushToPool()
+				ordhub.SendToChef <- dish
+			}
 		}
 		con.send <- []byte("im live")
 	}
@@ -200,7 +239,41 @@ func ChefPlatform(w http.ResponseWriter, r *http.Request) {
 		chefunregister <- con
 		ws.Close()
 	}()
+	var dish = new(singledishplus)
 	for {
+		err := ws.ReadJSON(dish)
+		if err == nil {
+			ordhub.DishDone <- dish
+		}
+		//send
 		con.send <- []byte("im live")
 	}
+}
+
+// 结账判断
+func CheckOut(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseForm()
+	if err != nil {
+		errorlog.Println(err)
+	}
+	deskid, err := strconv.Atoi(r.Form.Get("deskid"))
+	if err != nil {
+		errorlog.Println(err)
+	}
+	fmt.Println("recive desk", deskid, "check out")
+	if _, ok := deskinfo[deskid]; !ok {
+		processlog.Println("no such desk")
+		return
+	}
+	userfo := deskinfo[deskid]
+	userfo.Status = true
+	processlog.Println(deskid, " was check out")
+	//将客户的点菜操作保存到磁盘
+	f, err := os.OpenFile(ROOTPATH+"/data", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		errorlog.Println(err)
+		return
+	}
+	f.Write([]byte(userfo.Action))
+	f.Close()
 }

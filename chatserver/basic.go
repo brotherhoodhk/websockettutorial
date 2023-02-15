@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -27,7 +28,12 @@ func LogInit(logname string) *log.Logger {
 func (s *singledish) ScanAction(action string) {
 	acarray := strings.Split(action, "&")
 	s.Name = acarray[1]
-	s.time = acarray[0]
+	s.Time = acarray[0]
+	var err error
+	s.Id, err = strconv.Atoi(acarray[2])
+	if err != nil {
+		errorlog.Println(err)
+	}
 }
 
 // 将此操作添加到后厨菜单池

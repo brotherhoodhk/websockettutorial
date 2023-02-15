@@ -6,9 +6,10 @@ var conpool = make(map[*Connection]struct{})
 var roompool = make(map[string][]*Connection)
 var customerpool = make(map[*Connection]*userinfo)
 var dishespool = make(map[*singledish]bool) //菜单池，false表示点单未出单，true表示出单
-var ordhub = &OrderHub{SendToChef: make(chan *singledish)}
+var ordhub = &OrderHub{SendToChef: make(chan *singledish), DishDone: make(chan *singledishplus)}
 var chefpool = make(map[*Connection]struct{})
-
+var dishlink = make(map[int]*singledish) //订单id与具体订单绑定
+var deskinfo = make(map[int]*userinfo)   //将订单讯息与餐位绑定
 type basicmsg struct {
 	Content string `json:"content"`
 	Sign    string `json:"sign"`
@@ -28,7 +29,7 @@ type Hub struct {
 // order system
 type order struct {
 	Header string `json:"header"`
-	Dish   int    `json:"dish"`
+	Dish   []int  `json:"dish"`
 }
 
 // 记录点菜的客户讯息
@@ -40,8 +41,9 @@ type userinfo struct {
 	Action  string  `json:"action"`  //记录客户的所有点菜操作
 }
 type singledish struct {
-	Name string
-	time string
+	Name string `json:"name"`
+	Time string `json:"time"`
+	Id   int    `json:"id"`
 }
 type aboutdish struct {
 	Name  string
@@ -50,4 +52,11 @@ type aboutdish struct {
 }
 type OrderHub struct {
 	SendToChef chan *singledish
+	DishDone   chan *singledishplus
+}
+
+// singledish加强版，用于接受厨师端的讯息
+type singledishplus struct {
+	Dishinfo *singledish `json:"dishinfo"`
+	Orderid  int         `json:"orderid"` //订单唯一的id，由5位10进制数组成，用于识别客户点的每一道菜
 }
