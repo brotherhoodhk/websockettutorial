@@ -12,6 +12,9 @@ const (
 	LOGPATH  = ROOTPATH + "/logs/"
 )
 
+var errorlog = LogInit("errorlog")
+var processlog = LogInit("process")
+
 func LogInit(logname string) *log.Logger {
 	f, err := os.OpenFile(LOGPATH+logname+".log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {

@@ -15,6 +15,8 @@ import (
 
 var upgrade = websocket.Upgrader{ReadBufferSize: 1024, WriteBufferSize: 1024}
 var hub = &Hub{register: make(chan *Connection), unregister: make(chan *Connection), Broadcast: make(chan []byte, 512), customer: make(chan *Connection), clearcustomer: make(chan *Connection)}
+var chefregister = make(chan *Connection)
+var chefunregister = make(chan *Connection)
 
 func (s *Hub) Run() {
 	fmt.Println("start register machine")
@@ -32,9 +34,6 @@ func (s *Hub) Run() {
 		//order system zone start
 		case c := <-s.customer:
 			conpool[c] = struct{}{}
-			id := rand.Intn(89999) + 10000
-			orderid := rand.Intn(899999) + 100000
-			customerpool[c] = &userinfo{Id: id, OrderId: orderid, Status: false, Sum: 0, Action: ""}
 		case c := <-s.clearcustomer:
 			if _, ok := conpool[c]; ok {
 				delete(conpool, c)
@@ -42,12 +41,26 @@ func (s *Hub) Run() {
 			if _, ok := customerpool[c]; ok {
 				delete(customerpool, c)
 			}
+		//order system zone end
+		//chef zone start
+		case c := <-chefregister:
+			conpool[c] = struct{}{}
+			chefpool[c] = struct{}{}
+			processlog.Println("register a chef")
+		case c := <-chefunregister:
+			if _, ok := chefpool[c]; ok {
+				delete(chefpool, c)
+				processlog.Println("unregister a chef")
+			}
+			if _, ok := conpool[c]; ok {
+				delete(conpool, c)
+			}
 		case c := <-ordhub.SendToChef:
 			for con, _ := range chefpool {
 				err := con.con.WriteJSON(c)
 				errorlog.Println(err)
 			}
-		//order system zone end
+		//chef zone end
 		case m := <-s.Broadcast:
 			for clients := range conpool {
 				select {
@@ -64,6 +77,7 @@ func ServerStart() {
 	go hub.Run()
 	http.HandleFunc("/chat", ChatRoom)
 	http.HandleFunc("/orderdish", OrderSomething)
+	http.HandleFunc("/chef", ChefPlatform)
 	http.ListenAndServe(":8001", nil)
 }
 func ChatRoom(w http.ResponseWriter, r *http.Request) {
@@ -111,15 +125,12 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-var errorlog = LogInit("errorlog")
-
 // ordering system
 func OrderSomething(w http.ResponseWriter, r *http.Request) {
 	upgrade.CheckOrigin = func(r *http.Request) bool { return true }
 	ws, err := upgrade.Upgrade(w, r, nil)
 	if err != nil {
 		errorlog.Println(err)
-		return
 	}
 	con := &Connection{con: ws, send: make(chan []byte, 256)}
 	hub.register <- con
@@ -136,8 +147,18 @@ func Waiter(con *Connection) {
 		if err != nil {
 			errorlog.Println("read from connection failed,", err)
 		} else {
+			//debug zone
+			if _, ok := customerpool[con]; !ok {
+				fmt.Println("connection dont exsit")
+				id := rand.Intn(89999) + 10000
+				orderid := rand.Intn(899999) + 100000
+				customerpool[con] = &userinfo{Id: id, OrderId: orderid, Sum: 0, Action: ""}
+			}
+			//end
 			userorderinfo := customerpool[con]
+			fmt.Println(userorderinfo) //debug line
 			price, actionid := getdishinfo(orderinfo.Dish)
+			fmt.Println(price) //debug line
 			userorderinfo.Sum += price
 			userorderinfo.Action += actionid + "\n"
 			//这里还应有一个推送功能，用于将新点菜品发送给后厨端
@@ -146,6 +167,7 @@ func Waiter(con *Connection) {
 			dish.PushToPool()
 			ordhub.SendToChef <- dish
 		}
+		con.send <- []byte("im live")
 	}
 }
 func getdishinfo(id int) (float32, string) {
@@ -158,11 +180,27 @@ func getdishinfo(id int) (float32, string) {
 	defer dbcon.Close()
 	var dishinfo aboutdish
 	dishinfo.Id = id
-	dbcon.QueryRow("select price,name from ordersystem where id =?", id).Scan(&dishinfo.Price, &dishinfo.Name)
+	err = dbcon.QueryRow("select price,name from ordersystem where id =?", id).Scan(&dishinfo.Price, &dishinfo.Name)
 	if err != nil {
 		errorlog.Println(err)
 	}
 	//操作id=下单时间+菜品名称+菜品id
 	actionid := time.Now().Format(time.Kitchen) + "&" + dishinfo.Name + "&" + strconv.Itoa(dishinfo.Id)
 	return dishinfo.Price, actionid
+}
+func ChefPlatform(w http.ResponseWriter, r *http.Request) {
+	upgrade.CheckOrigin = func(r *http.Request) bool { return true }
+	ws, err := upgrade.Upgrade(w, r, nil)
+	if err != nil {
+		errorlog.Println("establish connection with chef failed", err)
+	}
+	con := &Connection{con: ws, send: make(chan []byte, 256)}
+	chefregister <- con
+	defer func() {
+		chefunregister <- con
+		ws.Close()
+	}()
+	for {
+		con.send <- []byte("im live")
+	}
 }
